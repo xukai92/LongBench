@@ -4,7 +4,8 @@ import time
 from tqdm import tqdm
 from datasets import load_dataset
 import re
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, LlamaConfig
+from models.llama_kivi import LlamaForCausalLM_KIVI
 import torch.multiprocessing as mp
 import torch
 
@@ -56,15 +57,29 @@ def extract_answer(response):
             return None
 
 def get_pred(data, args, fout):
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+    
     
     # load model locally
-    model_instance = AutoModelForCausalLM.from_pretrained(
-        args.model_path, 
-        torch_dtype=torch.float16, 
-        device_map="auto",
-        trust_remote_code=True
-    )
+    if args.config:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_path, use_fast=False, trust_remote_code=True
+        )
+        config = LlamaConfig.from_pretrained(args.config_path)
+        model_instance = LlamaForCausalLM_KIVI.from_pretrained(
+            args.model_path,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+            config=config,
+        )
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+        model_instance = AutoModelForCausalLM.from_pretrained(
+            args.model_path, 
+            torch_dtype=torch.float16, 
+            device_map="auto",
+            trust_remote_code=True
+        )
     pipe = pipeline(
         "text-generation",
         model=model_instance,
@@ -111,13 +126,17 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     print(args)
     if args.rag > 0:
-        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + f"_rag_{str(args.rag)}.jsonl")
+        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + \
+            f"_rag_{str(args.rag)}-{args.rank}_{args.total_rank}.jsonl")
     elif args.no_context:
-        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + "_no_context.jsonl")
+        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + \
+            f"_no_context-{args.rank}_{args.total_rank}.jsonl")
     elif args.cot:
-        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + "_cot.jsonl")
+        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + \
+            f"_cot-{args.rank}_{args.total_rank}.jsonl")
     else:
-        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + ".jsonl")
+        out_file = os.path.join(args.save_dir, args.model_path.split("/")[-1] + \
+            f"-{args.rank}_{args.total_rank}.jsonl")
 
     dataset = load_dataset('THUDM/LongBench-v2', split='train') # dataset = json.load(open('data.json', 'r', encoding='utf-8'))
     data_all = [{"_id": item["_id"], "domain": item["domain"], "sub_domain": item["sub_domain"], "difficulty": item["difficulty"], "length": item["length"], "question": item["question"], "choice_A": item["choice_A"], "choice_B": item["choice_B"], "choice_C": item["choice_C"], "choice_D": item["choice_D"], "answer": item["answer"], "context": item["context"]} for item in dataset]
@@ -140,6 +159,7 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--save_dir", "-s", type=str, default="results")
+    parser.add_argument("--config_path", "-cp", type=str, default=None)
     parser.add_argument("--model_path", "-mp", type=str, required=True, help="path to the model, e.g. meta-llama/Llama-3.1-8B-Instruct")
     parser.add_argument("--maxlen", "-ml", type=int, default=120000, help="maximum token length for the model")
     parser.add_argument("--cot", "-cot", action='store_true') # set to true if using cot
