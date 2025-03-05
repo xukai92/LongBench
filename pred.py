@@ -60,7 +60,7 @@ def get_pred(data, args, fout):
     
     
     # load model locally
-    if args.config:
+    if args.config_path:
         tokenizer = AutoTokenizer.from_pretrained(
             args.model_path, use_fast=False, trust_remote_code=True
         )
